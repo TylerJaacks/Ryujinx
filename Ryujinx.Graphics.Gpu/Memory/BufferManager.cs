@@ -114,6 +114,8 @@ namespace Ryujinx.Graphics.Gpu.Memory
 
         private bool _rebind;
 
+        private Dictionary<ulong, UboCacheEntry> _uboCache;
+
         /// <summary>
         /// Creates a new instance of the buffer manager.
         /// </summary>
@@ -143,6 +145,8 @@ namespace Ryujinx.Graphics.Gpu.Memory
             }
 
             _bufferTextures = new List<BufferTextureBinding>();
+
+            _uboCache = new Dictionary<ulong, UboCacheEntry>();
         }
 
         /// <summary>
@@ -467,6 +471,29 @@ namespace Ryujinx.Graphics.Gpu.Memory
         }
 
         /// <summary>
+        /// Performs address translation of the GPU virtual address, and attempts
+        /// to obtain a cached uniform buffer for the given address with a fast lookup.
+        /// If needed, a new buffer is created for the range.
+        /// </summary>
+        /// <param name="gpuVa">Start GPU virtual address of the buffer</param>
+        /// <param name="size">Size in bytes of the buffer</param>
+        /// <returns>A cached uniform buffer entry, containing the CPU VA and buffer to be modified</returns>
+        public UboCacheEntry TranslateCreateAndGetUbo(ulong gpuVa, ulong size)
+        {
+            UboCacheEntry result;
+
+            if (!_uboCache.TryGetValue(gpuVa, out result) || result.EndGpuAddress < gpuVa + size || result.UnmappedSequence != result.Buffer.UnmappedSequence)
+            {
+                ulong address = TranslateAndCreateBuffer(gpuVa, size);
+                result = new UboCacheEntry(address, gpuVa, GetBuffer(address, size));
+
+                _uboCache[gpuVa] = result;
+            }
+
+            return result;
+        }
+
+        /// <summary>
         /// Creates a new buffer for the specified range, if needed.
         /// If a buffer where this range can be fully contained already exists,
         /// then the creation of a new buffer is not necessary.
@@ -520,7 +547,7 @@ namespace Ryujinx.Graphics.Gpu.Memory
 
                         int dstOffset = (int)(buffer.Address - newBuffer.Address);
 
-                        buffer.SynchronizeMemory(buffer.Address, buffer.Size);
+                        buffer.ForceSynchronizeMemory(buffer.Address, buffer.Size);
 
                         buffer.CopyTo(newBuffer, dstOffset);
                         newBuffer.InheritModifiedRanges(buffer);
